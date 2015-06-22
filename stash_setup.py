@@ -1,7 +1,6 @@
 #Author: Giovanni Matos
 #Copyright: 2015 Hewlett Packard
 
-
 # This program sets up a stash repository from a configuration file
 
 import requests
@@ -22,22 +21,23 @@ class rester:
       self.admin_auth = requests.auth.HTTPBasicAuth(self.config['admin_user'],
                                               self.config['admin_password'])
 
-      self.stash_auth = requests.auth.HTTPBasicAuth(self.config['stash_user'],
-                                              self.config['stash_password'])
-
       self.headers = {'content-type': 'application/json'}
       self.host_api='http://' + self.http_host + '/rest/api/1.0/'
 
-   def set_ssh_key(self):
+   def set_ssh_key(self,key_file,user_auth):
       req = 'http://' + self.http_host + '/rest/ssh/1.0/keys'
-      with open('/var/stash/config/RSA_key.pub',"r") as myfile:
+      if not os.path.isfile('/var/stash/config/'+key_file):
+         print "[INFO]: SSH key file " +str(key_file)+" does not exist"
+         return
+
+      with open('/var/stash/config/'+key_file,"r") as myfile:
          data=myfile.read().replace('\n','')
       body = {'text':data}
       try:
          r = requests.post(
                   req,
                   data=json.dumps(body),
-                  auth= self.stash_auth, 
+                  auth= user_auth, 
                   headers=self.headers
                           )
       except Exception as e:
@@ -48,36 +48,38 @@ class rester:
          print "Unable to transfer RSA key: " \
               + r.json()["errors"][0]["message"]              
 
-
-   def create_project(self):
+   def create_project(self,project,user_auth):
       command = 'projects'
       req = self.host_api + command
       proj = {
-          'key':self.config['proj_key'],
-          'name':self.config['proj_name'],
-          'description':self.config['proj_desc']
+          'key':project['key'],
+          'name':project['name'],
+          'description':project['desc']
        }
       try:
          r = requests.post(
                   req,
                   data = json.dumps(proj),
                   headers = self.headers,
-                  auth = self.stash_auth)
+                  auth = user_auth)
       except Exception as e:
          print "Error creating project: " + e
 
       if r.status_code == 201:
-         print "Project " + str(self.config['proj_name']) + " successfully created"
+         print "Project " + str(project['name']) + " successfully created"
       else:   
          print "Unable to create project: " \
               + r.json()["errors"][0]["message"]              
 
+      # Create related repositories
+      for repository in project['repositories']:
+         self.create_repo(repository,project['key'],user_auth)
 
-   def create_repo(self):
-      command = 'projects/' + self.config['proj_key'] + '/repos'
+   def create_repo(self,repository,project_key,user_auth):
+      command = 'projects/' + project_key + '/repos'
       req = self.host_api + command
       repo = {
-          'name':self.config['repo_name'],
+          'name':repository['name'],
           'scmld':'git',
        'forkable':True
        }
@@ -86,32 +88,35 @@ class rester:
                   req,
                   data = json.dumps(repo),
                   headers = self.headers,
-                  auth = self.stash_auth)    
+                  auth = user_auth)    
       except Exception as e:
          print "Error creating repository: " + e
       if r.status_code == 201:
-         print "Repository " + str(self.config['repo_name']) + " successfully created"
+         print "Repository " + str(repository['name']) + " successfully created"
       else:   
          print "Unable to create repository: " \
               + r.json()["errors"][0]["message"]              
-
-   def create_user(self):          
+      if 'hook_id' in config: 
+      #block for now, maybe move it to repository configuration?
+         self.hook_setup(repository,project_key,user_auth)
+   
+   def create_user(self,user):          
       # First create the user then set them as project creator
       #command = 'admin/users'
       # For some reason stash doesnt like this request using json.
       # Using a direct link instead
-      command = 'admin/users?name=' + self.config['stash_user'] \
-              + '&password=' + self.config['stash_password'] \
-              + '&displayName=' + self.config['stash_name'] \
-              + '&emailAddress=' + self.config['stash_email']
+      command = 'admin/users?name=' + user['username'] \
+              + '&password=' + user['password'] \
+              + '&displayName=' + user['name'] \
+              + '&emailAddress=' + user['email']
 
       req = self.host_api + command
-      user = {
-           'name':self.config['stash_user'],
-           'password':self.config['stash_password'],
-           'displayName':self.config['stash_name'],
-           'emailAddress':self.config['stash_email'],
-      }
+#      user = {
+ #          'name':user['username'],
+  #         'password':user['password'],
+   #        'displayName':user['name'],
+    #       'emailAddress':user['email'],
+     # }
       try:
          r = requests.post(
              req,
@@ -126,11 +131,11 @@ class rester:
          #command = 'admin/permissions/users'
          # For some reason stash doesnt like this request using json.
          # Using a direct link instead
-         command = 'admin/permissions/users?name=' + self.config['stash_user'] \
+         command = 'admin/permissions/users?name=' + user['username'] \
                   +'&permission=PROJECT_CREATE'
          req = self.host_api + command
          perm = {
-            'name':self.config['stash_user'],
+            'name':user['username'],
             'permission':'PROJECT_CREATE'
          }
          try:
@@ -152,9 +157,19 @@ class rester:
          print "Unable to create user: " \
              + r.json()["errors"][0]["message"]     
 
-   def hook_setup(self):           
-      command = 'projects/' + self.config['proj_key'] + '/repos/' \
-                            + self.config['repo_name'] + '/settings/hooks/' \
+      user_auth = requests.auth.HTTPBasicAuth(user['username'], user['password'])
+
+      # Create any projects for the current user      
+      for project in user['projects']:
+         self.create_project(project,user_auth)
+
+      # Set ssh key
+      if 'RSA_key' in user:
+         self.set_ssh_key(user['RSA_key'],user_auth)
+
+   def hook_setup(self,repository,project_key,user_auth):           
+      command = 'projects/' + project_key + '/repos/' \
+                            + repository['name'] + '/settings/hooks/' \
                             + self.config['hook_id'] +'/settings'
       
       req = self.host_api + command
@@ -165,12 +180,12 @@ class rester:
          "params":""
       }
       try:
-         r = requests.put( req,data=json.dumps(params),headers=self.headers,auth=self.stash_auth)
+         r = requests.put( req,data=json.dumps(params),headers=self.headers,auth=user_auth)
          if r.status_code ==200:
             print "Pre-receive hook successfull configured"   
             if self.config['hook_enable']:
-               command = 'projects/' + self.config['proj_key'] + '/repos/' \
-                                     + self.config['repo_name'] + '/settings/hooks/' \
+               command = 'projects/' + project_key + '/repos/' \
+                                     + repository['name'] + '/settings/hooks/' \
                                      + self.config['hook_id'] +'/enabled'
                req = self.host_api + command
                params = {
@@ -182,7 +197,7 @@ class rester:
                }
 
                try:
-                  r = requests.put(req,data=json.dumps(params),headers=self.headers,auth=self.stash_auth)
+                  r = requests.put(req,data=json.dumps(params),headers=self.headers,auth=user_auth)
                   if r.status_code ==200:
                      print "Pre-receive hook successfully enabled" 
                   else:
@@ -207,21 +222,22 @@ try:
       config['host'] = os.environ['STASH_HOST']
       config['stash_port'] = os.environ['STASH_PORT']
       config['stash_git_port'] = os.environ['STASH_GIT_PORT']
+      config['hook_exe'] = os.environ['VG_HOOK_EXE']
 except Exception as e:
 # If the config file cannot be imported as a dictionary, bail!
    print e
    sys.exit()
-# Create the verigreen hook configuration file
-filename = os.environ['VG_HOOK'] + "/hook.properties"
-with open(filename,'w') as f:
-   f.write("collector.address="+config['collector_address'])
-   
+
 url = "http://" + config['host'] +":"+config['stash_port']
-limit = 300 #5 minute timeout
+limit = 600 #10 minute timeout by default
+if 'timeout' in config and type (config['timeout']) == int:
+   limit = config['timeout']
+
 total_time =0
 wait_time = 10
 success = False
 preg = re.compile('/projects\Z')
+
 while total_time < limit:
    try:
       r = requests.get(url)   
@@ -242,10 +258,12 @@ if success:
    # Applying browns law and sending a curl request for that page before setting everything up
    commander = rester(config)
    cmd = "curl -u " + commander.config['admin_user'] + ":" \
-           + commander.config['admin_password'] + " " + url + "/profile"
+           + commander.config['admin_password'] + " " + url + "/profile >/dev/null"
    os.system(cmd)
-   commander.create_user()
-   commander.set_ssh_key()
-   commander.create_project()
-   commander.create_repo()   
-   commander.hook_setup()
+   for user in config['users']:
+      commander.create_user(user)
+
+     
+   print "Setup complete"   
+else:
+   print "[INFO]: Timeout expired, gave trying to setup stash."   

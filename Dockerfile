@@ -3,10 +3,9 @@ MAINTAINER Giovanni Matos http://github.com/gmatoshp
 
 ENV VG_HOOK_HOME="/var/vg_hook/home" \
     VG_HOOK="/var/vg_hook/config" \
-    VERIGREEN_VERSION="2.0.1"
+    VERIGREEN_VERSION="2.0.1" \
+    VG_HOOK_EXE="vg_hook.sh"
 
-     
-    
 RUN mkdir -p $VG_HOOK && \
     mkdir -p $VG_HOOK_HOME && \
 
@@ -16,3 +15,7 @@ RUN mkdir -p $VG_HOOK && \
     cp git-hook/verigreen-git-hook/* $VG_HOOK_HOME
 
 ADD stash_setup.py stash_setup.py
+ADD setup.sh setup.sh
+ADD setup_hook.py setup_hook.py
+ADD vg_hook.sh vg_hook.sh
+CMD ./setup.sh $STASH_INSTALL_DIR
