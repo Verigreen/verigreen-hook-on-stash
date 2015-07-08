@@ -1,4 +1,4 @@
-FROM verigreen/stash
+FROM verigreen/stash:stash_3.8_v0.1
 MAINTAINER Giovanni Matos http://github.com/gmatoshp
 
 ENV VG_HOOK_HOME="/var/vg_hook/home" \
